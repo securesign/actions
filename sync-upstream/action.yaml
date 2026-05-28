@@ -150,11 +150,12 @@ runs:
       if: steps.check-uptodate.outputs.uptodate == 'false'
       id: existing-pr
       run: |
-        EXISTING_PR=$(gh pr list --state open --head "$SYNC_BRANCH" --json number --jq '.[0].number // empty')
+        EXISTING_PR=$(gh pr list --repo "$GH_REPO" --state open --head "$SYNC_BRANCH" --json number --jq '.[0].number // empty')
         echo "pr_number=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
         SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
 
     - name: Create or update PR
@@ -164,12 +165,12 @@ runs:
 
         if [ -n "$EXISTING_PR" ]; then
           echo "Updating existing PR #${EXISTING_PR}"
-          gh pr edit "$EXISTING_PR" \
+          gh pr edit "$EXISTING_PR" --repo "$GH_REPO" \
             --title "$PR_TITLE" \
             --body "$PR_BODY"
         else
           echo "Creating new PR"
-          gh pr create \
+          gh pr create --repo "$GH_REPO" \
             --base "$TARGET_BRANCH" \
             --head "$SYNC_BRANCH" \
             --title "$PR_TITLE" \
@@ -179,6 +180,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
+        GH_REPO: ${{ github.repository }}
         UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
         TARGET_BRANCH: ${{ inputs.target_branch }}
         SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
