@@ -70,10 +70,11 @@ on:
         default: ''
 
 jobs:
-  generate-token:
+  sync:
     runs-on: ubuntu-latest
-    outputs:
-      token: ${{ steps.app-token.outputs.token }}
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/create-github-app-token@v1
         id: app-token
@@ -81,34 +82,30 @@ jobs:
           app-id: ${{ vars.SYNC_APP_ID }}
           private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
 
-  sync:
-    needs: generate-token
-    uses: securesign/actions/.github/workflows/sync-upstream.yaml@main
-    with:
-      upstream_repo: https://github.com/sigstore/rekor
-      upstream_ref: ${{ inputs.upstream_ref || '' }}
-      target_branch: main
-    secrets:
-      token: ${{ needs.generate-token.outputs.token }}
+      - uses: securesign/actions/sync-upstream@main
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          upstream_repo: https://github.com/sigstore/rekor
+          upstream_ref: ${{ inputs.upstream_ref || '' }}
+          target_branch: main
 ```
 
 #### Inputs
 | Input | Type | Required | Description |
 |-------|------|----------|-------------|
+| `token` | string | yes | GitHub token with contents write + pull-requests write. Use a GitHub App token so PRs trigger CI. |
 | `upstream_repo` | string | yes | Upstream repository URL (e.g., `https://github.com/sigstore/rekor`) |
 | `upstream_ref` | string | no | Specific upstream ref (tag/branch) to merge. Auto-detects latest release if empty. |
 | `target_branch` | string | yes | Downstream branch to merge into (e.g., `main`) |
-
-#### Secrets
-| Secret | Required | Description |
-|--------|----------|-------------|
-| `token` | yes | GitHub token with contents write + pull-requests write. Use a GitHub App token (via `actions/create-github-app-token`) so PRs automatically trigger CI workflows. |
 
 #### GitHub App Setup
 1. Create a GitHub App in the securesign org with permissions: **Contents: Read & Write**, **Pull Requests: Read & Write**
 2. Install the app on the repositories that need upstream sync
 3. Store the App ID as an org-level variable: `SYNC_APP_ID`
 4. Store the private key as an org-level secret: `SYNC_APP_PRIVATE_KEY`
+
+#### Security
+The caller workflow generates a short-lived GitHub App installation token (1hr expiry) and passes only this token to the composite action. The private key never leaves the caller workflow.
 
 #### Features
 - **Auto-detection**: Queries the upstream repo's latest GitHub Release when no `upstream_ref` is provided
