@@ -70,26 +70,15 @@ on:
         default: ''
 
 jobs:
-  generate-token:
-    runs-on: ubuntu-latest
-    outputs:
-      token: ${{ steps.app-token.outputs.token }}
-    steps:
-      - uses: actions/create-github-app-token@v1
-        id: app-token
-        with:
-          app-id: ${{ vars.SYNC_APP_ID }}
-          private-key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
-
   sync:
-    needs: generate-token
     uses: securesign/actions/.github/workflows/sync-upstream.yaml@main
     with:
       upstream_repo: https://github.com/sigstore/rekor
       upstream_ref: ${{ inputs.upstream_ref || '' }}
       target_branch: main
+      app_id: ${{ vars.SYNC_APP_ID }}
     secrets:
-      token: ${{ needs.generate-token.outputs.token }}
+      app_private_key: ${{ secrets.SYNC_APP_PRIVATE_KEY }}
 ```
 
 #### Inputs
@@ -98,11 +87,12 @@ jobs:
 | `upstream_repo` | string | yes | Upstream repository URL (e.g., `https://github.com/sigstore/rekor`) |
 | `upstream_ref` | string | no | Specific upstream ref (tag/branch) to merge. Auto-detects latest release if empty. |
 | `target_branch` | string | yes | Downstream branch to merge into (e.g., `main`) |
+| `app_id` | string | yes | GitHub App ID for token generation |
 
 #### Secrets
 | Secret | Required | Description |
 |--------|----------|-------------|
-| `token` | yes | GitHub token with contents write + pull-requests write. Use a GitHub App token (via `actions/create-github-app-token`) so PRs automatically trigger CI workflows. |
+| `app_private_key` | yes | GitHub App private key for token generation |
 
 #### GitHub App Setup
 1. Create a GitHub App in the securesign org with permissions: **Contents: Read & Write**, **Pull Requests: Read & Write**

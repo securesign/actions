@@ -16,9 +16,14 @@ on:
         required: true
         type: string
         description: 'Downstream branch to merge into (e.g., main)'
-    secrets:
-      token:
+      app_id:
         required: true
+        type: string
+        description: 'GitHub App ID for token generation'
+    secrets:
+      app_private_key:
+        required: true
+        description: 'GitHub App private key for token generation'
 
 permissions:
   contents: write
@@ -28,6 +33,13 @@ jobs:
   sync-upstream:
     runs-on: ubuntu-latest
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ inputs.app_id }}
+          private-key: ${{ secrets.app_private_key }}
+
       - name: Derive upstream owner/repo
         id: upstream-info
         run: |
@@ -56,7 +68,7 @@ jobs:
           echo "ref=$LATEST_TAG" >> "$GITHUB_OUTPUT"
           echo "Detected latest upstream release: $LATEST_TAG"
         env:
-          GH_TOKEN: ${{ secrets.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           OWNER_REPO: ${{ steps.upstream-info.outputs.owner_repo }}
 
       - name: Set upstream ref
@@ -77,7 +89,7 @@ jobs:
         with:
           ref: ${{ inputs.target_branch }}
           fetch-depth: 0
-          token: ${{ secrets.token }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Check if already up-to-date
         id: check-uptodate
@@ -109,7 +121,7 @@ jobs:
           git checkout -b "$SYNC_BRANCH" FETCH_HEAD
           git push -f origin "$SYNC_BRANCH"
         env:
-          GITHUB_TOKEN: ${{ secrets.token }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
 
@@ -153,7 +165,7 @@ jobs:
           EXISTING_PR=$(gh pr list --state open --head "$SYNC_BRANCH" --json number --jq '.[0].number // empty')
           echo "pr_number=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
         env:
-          GH_TOKEN: ${{ secrets.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
 
       - name: Create or update PR
@@ -176,7 +188,7 @@ jobs:
               --label "kind/sync-fork-to-upstream"
           fi
         env:
-          GH_TOKEN: ${{ secrets.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
           TARGET_BRANCH: ${{ inputs.target_branch }}
           SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
