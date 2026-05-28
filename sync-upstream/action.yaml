@@ -116,7 +116,7 @@ runs:
       if: steps.check-uptodate.outputs.uptodate == 'false'
       id: pr-body
       run: |
-        COMMIT_LOG=$(git log --oneline "origin/${TARGET_BRANCH}..FETCH_HEAD" | head -50)
+        COMMIT_LOG=$(git log --oneline -50 "origin/${TARGET_BRANCH}..FETCH_HEAD")
         COMMIT_COUNT=$(git rev-list --count "origin/${TARGET_BRANCH}..FETCH_HEAD")
 
         DELIMITER=$(openssl rand -hex 16)
