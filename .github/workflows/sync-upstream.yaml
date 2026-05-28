@@ -1,0 +1,199 @@
+name: Sync Upstream
+
+on:
+  workflow_call:
+    inputs:
+      upstream_repo:
+        required: true
+        type: string
+        description: 'Upstream repository URL (e.g., https://github.com/sigstore/rekor)'
+      upstream_ref:
+        required: false
+        type: string
+        default: ''
+        description: 'Upstream ref to merge (tag or branch). If empty, auto-detects latest release tag.'
+      target_branch:
+        required: true
+        type: string
+        description: 'Downstream branch to merge into (e.g., main)'
+    secrets:
+      token:
+        required: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Derive upstream owner/repo
+        id: upstream-info
+        run: |
+          REPO_URL="${UPSTREAM_REPO}"
+          REPO_URL="${REPO_URL%.git}"
+          REPO_URL="${REPO_URL%/}"
+          REPO_URL="${REPO_URL#https://github.com/}"
+          REPO_URL="${REPO_URL#/}"
+          if ! echo "$REPO_URL" | grep -qE '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'; then
+            echo "::error::Invalid upstream_repo: could not derive owner/repo from '${UPSTREAM_REPO}'"
+            exit 1
+          fi
+          echo "owner_repo=$REPO_URL" >> "$GITHUB_OUTPUT"
+        env:
+          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
+
+      - name: Detect latest upstream release
+        id: detect-release
+        if: inputs.upstream_ref == ''
+        run: |
+          LATEST_TAG=$(gh api "repos/${OWNER_REPO}/releases/latest" --jq '.tag_name')
+          if [ -z "$LATEST_TAG" ]; then
+            echo "::error::No releases found for ${OWNER_REPO}"
+            exit 1
+          fi
+          echo "ref=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+          echo "Detected latest upstream release: $LATEST_TAG"
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          OWNER_REPO: ${{ steps.upstream-info.outputs.owner_repo }}
+
+      - name: Set upstream ref
+        id: upstream-ref
+        run: |
+          REF="${EXPLICIT_REF:-$DETECTED_REF}"
+          if [ -z "$REF" ]; then
+            echo "::error::No upstream ref resolved"
+            exit 1
+          fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+        env:
+          EXPLICIT_REF: ${{ inputs.upstream_ref }}
+          DETECTED_REF: ${{ steps.detect-release.outputs.ref }}
+
+      - name: Checkout downstream repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.token }}
+
+      - name: Check if already up-to-date
+        id: check-uptodate
+        run: |
+          git remote add upstream "${UPSTREAM_REPO}"
+          git fetch upstream "$UPSTREAM_REF"
+
+          UPSTREAM_SHA=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" HEAD; then
+            echo "Already up-to-date with upstream $UPSTREAM_REF"
+            echo "uptodate=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream $UPSTREAM_REF ($UPSTREAM_SHA) has new changes"
+            echo "uptodate=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          UPSTREAM_REPO: ${{ inputs.upstream_repo }}
+          UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
+
+      - name: Push upstream ref as sync branch
+        if: steps.check-uptodate.outputs.uptodate == 'false'
+        id: push
+        run: |
+          SAFE_REF="${UPSTREAM_REF//[^a-zA-Z0-9._-]/-}"
+          SYNC_BRANCH="sync-upstream/${TARGET_BRANCH}/${SAFE_REF}"
+
+          echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
+
+          git checkout -b "$SYNC_BRANCH" FETCH_HEAD
+          git push -f origin "$SYNC_BRANCH"
+        env:
+          GITHUB_TOKEN: ${{ secrets.token }}
+          UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+
+      - name: Generate PR body
+        if: steps.check-uptodate.outputs.uptodate == 'false'
+        id: pr-body
+        run: |
+          COMMIT_LOG=$(git log --oneline "origin/${TARGET_BRANCH}..FETCH_HEAD" | head -50)
+          COMMIT_COUNT=$(git rev-list --count "origin/${TARGET_BRANCH}..FETCH_HEAD")
+
+          DELIMITER=$(openssl rand -hex 16)
+          {
+            echo "body<<${DELIMITER}"
+            echo "## Upstream Sync: \`${UPSTREAM_REF}\` into \`${TARGET_BRANCH}\`"
+            echo ""
+            echo "Merges upstream [${OWNER_REPO}@${UPSTREAM_REF}](https://github.com/${OWNER_REPO}/releases/tag/${UPSTREAM_REF}) into \`${TARGET_BRANCH}\`."
+            echo ""
+            echo "### Upstream Changes (${COMMIT_COUNT} commits)"
+            echo ""
+            if [ "$COMMIT_COUNT" -gt 50 ]; then
+              echo "Showing first 50 of ${COMMIT_COUNT} commits:"
+              echo ""
+            fi
+            echo '```'
+            echo "$COMMIT_LOG"
+            echo '```'
+            echo ""
+            echo "---"
+            echo "*Generated by [Sync Upstream](https://github.com/securesign/actions) workflow*"
+            echo "${DELIMITER}"
+          } >> "$GITHUB_OUTPUT"
+        env:
+          UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          OWNER_REPO: ${{ steps.upstream-info.outputs.owner_repo }}
+
+      - name: Check for existing sync PR
+        if: steps.check-uptodate.outputs.uptodate == 'false'
+        id: existing-pr
+        run: |
+          EXISTING_PR=$(gh pr list --state open --head "$SYNC_BRANCH" --json number --jq '.[0].number // empty')
+          echo "pr_number=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
+
+      - name: Create or update PR
+        if: steps.check-uptodate.outputs.uptodate == 'false'
+        run: |
+          PR_TITLE="[Upstream Sync] Merge ${UPSTREAM_REF} into ${TARGET_BRANCH}"
+
+          if [ -n "$EXISTING_PR" ]; then
+            echo "Updating existing PR #${EXISTING_PR}"
+            gh pr edit "$EXISTING_PR" \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY"
+          else
+            echo "Creating new PR"
+            gh pr create \
+              --base "$TARGET_BRANCH" \
+              --head "$SYNC_BRANCH" \
+              --title "$PR_TITLE" \
+              --body "$PR_BODY" \
+              --label "kind/sync-fork-to-upstream"
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.token }}
+          UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
+          EXISTING_PR: ${{ steps.existing-pr.outputs.pr_number }}
+          PR_BODY: ${{ steps.pr-body.outputs.body }}
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "$UPTODATE" = "true" ]; then
+            echo "### :white_check_mark: Already up-to-date" >> "$GITHUB_STEP_SUMMARY"
+            echo "Branch \`${TARGET_BRANCH}\` already contains upstream \`${UPSTREAM_REF}\`." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "### :white_check_mark: Sync PR created" >> "$GITHUB_STEP_SUMMARY"
+            echo "Upstream \`${UPSTREAM_REF}\` → \`${TARGET_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
+          TARGET_BRANCH: ${{ inputs.target_branch }}
+          UPTODATE: ${{ steps.check-uptodate.outputs.uptodate }}
