@@ -18,6 +18,36 @@ inputs:
   target_branch:
     description: 'Downstream branch to merge into (e.g., main)'
     required: true
+  resolve_conflicts:
+    description: 'Auto-resolve known merge conflict patterns (true/false)'
+    required: false
+    default: 'true'
+  go_version_ceiling_image:
+    description: 'Container image that determines max Go version (e.g., registry.redhat.io/ubi9/go-toolset:latest)'
+    required: false
+    default: 'registry.redhat.io/ubi9/go-toolset:latest'
+  go_version_ceiling:
+    description: 'Explicit Go version ceiling override (e.g., 1.26.2). If set, skips Pyxis API lookup.'
+    required: false
+    default: ''
+  downstream_only_files:
+    description: 'Newline-separated list of files to always restore from target branch after merge'
+    required: false
+    default: ''
+  take_upstream_patterns:
+    description: >
+      Newline-separated list of grep -E patterns for conflicting files that should be
+      auto-resolved by taking upstream (HEAD) content.
+      Default includes CHANGELOG files. Add patterns like '\.pb\.go$' for generated protobuf.
+    required: false
+    default: '(^|/)CHANGELOG'
+  take_downstream_patterns:
+    description: >
+      Newline-separated list of grep -E patterns for conflicting files that should be
+      auto-resolved by taking downstream (target branch) content.
+      Example: 'testdata/' to keep downstream test fixtures.
+    required: false
+    default: ''
 
 runs:
   using: composite
@@ -70,7 +100,7 @@ runs:
         DETECTED_REF: ${{ steps.detect-release.outputs.ref }}
 
     - name: Checkout downstream repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v6
       with:
         ref: ${{ inputs.target_branch }}
         fetch-depth: 0
@@ -95,7 +125,7 @@ runs:
         OWNER_REPO: ${{ steps.upstream-info.outputs.owner_repo }}
         UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
 
-    - name: Push upstream ref as sync branch
+    - name: Create sync branch locally
       if: steps.check-uptodate.outputs.uptodate == 'false'
       id: push
       run: |
@@ -104,13 +134,37 @@ runs:
 
         echo "sync_branch=$SYNC_BRANCH" >> "$GITHUB_OUTPUT"
 
-        git checkout -b "$SYNC_BRANCH" FETCH_HEAD
-        git push -f origin "$SYNC_BRANCH"
+        # Dereference tag to commit and create local branch (no push yet)
+        UPSTREAM_COMMIT=$(git rev-parse FETCH_HEAD^{commit})
+        git checkout -B "$SYNC_BRANCH" "$UPSTREAM_COMMIT"
       shell: bash
       env:
-        GITHUB_TOKEN: ${{ inputs.token }}
         UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
         TARGET_BRANCH: ${{ inputs.target_branch }}
+
+    - name: Setup Go
+      if: steps.check-uptodate.outputs.uptodate == 'false' && inputs.resolve_conflicts == 'true'
+      uses: actions/setup-go@v6
+      with:
+        go-version: 'stable'
+        cache: false
+
+    - name: Merge, resolve conflicts, and push
+      id: merge
+      if: steps.check-uptodate.outputs.uptodate == 'false'
+      run: bash "${GITHUB_ACTION_PATH}/resolve-conflicts.sh"
+      shell: bash
+      env:
+        SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+        RESOLVE_CONFLICTS: ${{ inputs.resolve_conflicts }}
+        GO_CEILING_IMAGE: ${{ inputs.go_version_ceiling_image }}
+        GO_CEILING_OVERRIDE: ${{ inputs.go_version_ceiling }}
+        DOWNSTREAM_ONLY_FILES: ${{ inputs.downstream_only_files }}
+        TAKE_UPSTREAM_PATTERNS: ${{ inputs.take_upstream_patterns }}
+        TAKE_DOWNSTREAM_PATTERNS: ${{ inputs.take_downstream_patterns }}
+        UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
+        GITHUB_TOKEN: ${{ inputs.token }}
 
     - name: Generate PR body
       if: steps.check-uptodate.outputs.uptodate == 'false'
@@ -188,17 +242,52 @@ runs:
         PR_BODY: ${{ steps.pr-body.outputs.body }}
 
     - name: Summary
-      if: always()
+      if: always() && steps.check-uptodate.outcome == 'success'
       run: |
         if [ "$UPTODATE" = "true" ]; then
           echo "### :white_check_mark: Already up-to-date" >> "$GITHUB_STEP_SUMMARY"
           echo "Branch \`${TARGET_BRANCH}\` already contains upstream \`${UPSTREAM_REF}\`." >> "$GITHUB_STEP_SUMMARY"
-        else
+        elif [ "$MERGE_OUTCOME" = "success" ]; then
           echo "### :white_check_mark: Sync PR created" >> "$GITHUB_STEP_SUMMARY"
           echo "Upstream \`${UPSTREAM_REF}\` → \`${TARGET_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$MERGE_OUTCOME" = "failure" ] && [ -f /tmp/unresolved-conflicts.txt ]; then
+          SYNC_BRANCH="${SYNC_BRANCH}"
+          echo "### :warning: Upstream sync needs manual resolution" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Merged \`${UPSTREAM_REF}\` into \`${TARGET_BRANCH}\` — some conflicts could not be auto-resolved." >> "$GITHUB_STEP_SUMMARY"
+          echo "The sync branch \`${SYNC_BRANCH}\` has been pushed so you can continue locally." >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "#### Unresolved files" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            echo "- \`${f}\`" >> "$GITHUB_STEP_SUMMARY"
+          done < /tmp/unresolved-conflicts.txt
+          cat >> "$GITHUB_STEP_SUMMARY" <<GUIDE
+
+#### Resolve locally
+
+\`\`\`bash
+# 1. Check out the sync branch and start the merge
+git fetch origin
+git checkout ${SYNC_BRANCH}
+git merge origin/${TARGET_BRANCH}
+
+# 2. Auto-resolve known patterns (Dockerfiles, go.mod, workflow version bumps)
+go install github.com/securesign/actions/sync-upstream/resolve-conflicts@main
+resolve-conflicts all
+
+# 3. Resolve remaining conflicts manually, then commit and push
+git diff --name-only --diff-filter=U
+git add -A && git commit
+git push origin ${SYNC_BRANCH}
+\`\`\`
+GUIDE
         fi
       shell: bash
       env:
         UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
         TARGET_BRANCH: ${{ inputs.target_branch }}
+        SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
         UPTODATE: ${{ steps.check-uptodate.outputs.uptodate }}
+        MERGE_OUTCOME: ${{ steps.merge.outcome }}
