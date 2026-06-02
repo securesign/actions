@@ -207,15 +207,9 @@ func ResolveVersion(baseVer string, ours, theirs *modfile.Require) *modfile.Requ
 		return nil
 	}
 	if ours == nil {
-		if theirs.Mod.Version == baseVer {
-			return nil
-		}
 		return theirs
 	}
 	if theirs == nil {
-		if ours.Mod.Version == baseVer {
-			return nil
-		}
 		return ours
 	}
 
