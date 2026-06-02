@@ -263,26 +263,26 @@ runs:
             [ -z "$f" ] && continue
             echo "- \`${f}\`" >> "$GITHUB_STEP_SUMMARY"
           done < /tmp/unresolved-conflicts.txt
-          cat >> "$GITHUB_STEP_SUMMARY" <<GUIDE
-
-#### Resolve locally
-
-\`\`\`bash
-# 1. Check out the sync branch and start the merge
-git fetch origin
-git checkout ${SYNC_BRANCH}
-git merge origin/${TARGET_BRANCH}
-
-# 2. Auto-resolve known patterns (Dockerfiles, go.mod, workflow version bumps)
-go install github.com/securesign/actions/sync-upstream/resolve-conflicts@main
-resolve-conflicts all
-
-# 3. Resolve remaining conflicts manually, then commit and push
-git diff --name-only --diff-filter=U
-git add -A && git commit
-git push origin ${SYNC_BRANCH}
-\`\`\`
-GUIDE
+          {
+            echo ""
+            echo "#### Resolve locally"
+            echo ""
+            echo '```bash'
+            echo "# 1. Check out the sync branch and start the merge"
+            echo "git fetch origin"
+            echo "git checkout ${SYNC_BRANCH}"
+            echo "git merge origin/${TARGET_BRANCH}"
+            echo ""
+            echo "# 2. Auto-resolve known patterns (Dockerfiles, go.mod, workflow version bumps)"
+            echo "go install github.com/securesign/actions/sync-upstream/resolve-conflicts@main"
+            echo "resolve-conflicts all"
+            echo ""
+            echo "# 3. Resolve remaining conflicts manually, then commit and push"
+            echo "git diff --name-only --diff-filter=U"
+            echo "git add -A && git commit"
+            echo "git push origin ${SYNC_BRANCH}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
         fi
       shell: bash
       env:
