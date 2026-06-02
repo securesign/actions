@@ -193,6 +193,7 @@ resolve_take_upstream() {
             [[ -z "${f}" ]] && continue
             git checkout --ours "${f}" || fatal "Failed to resolve ${f}"
             git add "${f}"
+            echo "${f}" >> /tmp/resolved-take-upstream.txt
             info "Resolved (upstream pattern '${pattern}'): ${f}"
         done <<< "${matches}"
         remaining=$(get_conflicting_files)
@@ -216,6 +217,7 @@ resolve_take_downstream() {
             [[ -z "${f}" ]] && continue
             git checkout --theirs "${f}" || fatal "Failed to resolve ${f}"
             git add "${f}"
+            echo "${f}" >> /tmp/resolved-take-downstream.txt
             info "Resolved (downstream pattern '${pattern}'): ${f}"
         done <<< "${matches}"
         remaining=$(get_conflicting_files)
@@ -225,6 +227,8 @@ resolve_take_downstream() {
 
 main() {
     info "Starting: ${SYNC_BRANCH} <- ${TARGET_BRANCH}"
+    : > /tmp/resolved-take-upstream.txt
+    : > /tmp/resolved-take-downstream.txt
 
     if [[ "${RESOLVE_CONFLICTS}" == "true" ]]; then
         build_tool
