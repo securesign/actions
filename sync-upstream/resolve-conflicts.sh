@@ -104,7 +104,10 @@ resolve_image_versions() {
 
     while IFS= read -r f; do
         [[ -z "${f}" ]] && continue
-        "${RESOLVE}" dockerfile --file "${f}" || fatal "Failed to resolve ${f}"
+        if ! "${RESOLVE}" dockerfile --file "${f}"; then
+            info "Cannot auto-resolve ${f} — will remain as conflict"
+            continue
+        fi
         git add "${f}"
         info "Resolved: ${f}"
     done <<< "${conflicts}"
@@ -131,10 +134,19 @@ resolve_gomod() {
     while IFS= read -r f; do
         [[ -z "${f}" ]] && continue
         git show "${MERGE_BASE}:${f}" > "${tmpdir}/base.mod" 2>/dev/null || echo "module unknown" > "${tmpdir}/base.mod"
-        git show "MERGE_HEAD:${f}" > "${tmpdir}/ours.mod" 2>/dev/null || fatal "Cannot auto-resolve ${f}: modify/delete conflict (file missing on one side) — resolve manually"
-        git show "HEAD:${f}" > "${tmpdir}/theirs.mod" 2>/dev/null || fatal "Cannot auto-resolve ${f}: modify/delete conflict (file missing on one side) — resolve manually"
-        "${RESOLVE}" gomod --base "${tmpdir}/base.mod" --ours "${tmpdir}/ours.mod" --theirs "${tmpdir}/theirs.mod" \
-            --go-ceiling "${go_ceiling}" --output "${f}" || fatal "Failed to merge ${f}"
+        if ! git show "MERGE_HEAD:${f}" > "${tmpdir}/ours.mod" 2>/dev/null; then
+            info "Cannot auto-resolve ${f}: modify/delete conflict — will remain as conflict"
+            continue
+        fi
+        if ! git show "HEAD:${f}" > "${tmpdir}/theirs.mod" 2>/dev/null; then
+            info "Cannot auto-resolve ${f}: modify/delete conflict — will remain as conflict"
+            continue
+        fi
+        if ! "${RESOLVE}" gomod --base "${tmpdir}/base.mod" --ours "${tmpdir}/ours.mod" --theirs "${tmpdir}/theirs.mod" \
+            --go-ceiling "${go_ceiling}" --output "${f}"; then
+            info "Cannot auto-resolve ${f} — will remain as conflict"
+            continue
+        fi
         git add "${f}"
         gomod_dirs+=("$(dirname "${f}")")
         info "Resolved: ${f} (ceiling: ${go_ceiling})"
@@ -152,7 +164,12 @@ resolve_gomod() {
         fi
 
         info "Running go mod tidy in ${dir}"
-        (cd "${dir}" && go mod tidy) || fatal "go mod tidy failed in ${dir}"
+        if ! (cd "${dir}" && go mod tidy); then
+            err "go mod tidy failed in ${dir} — go.sum may need manual fix"
+            git checkout -- "${dir}/go.mod" "${dir}/go.sum" 2>/dev/null || true
+            echo "${dir}" >> /tmp/go-mod-tidy-failed.txt
+            continue
+        fi
         git add "${dir}/go.mod" "${dir}/go.sum"
     done
     echo "::endgroup::"
@@ -170,7 +187,10 @@ resolve_workflows() {
 
     while IFS= read -r f; do
         [[ -z "${f}" ]] && continue
-        "${RESOLVE}" workflow --file "${f}" || fatal "Failed to resolve ${f}"
+        if ! "${RESOLVE}" workflow --file "${f}"; then
+            info "Cannot auto-resolve ${f} — will remain as conflict"
+            continue
+        fi
         git add "${f}"
         info "Resolved: ${f}"
     done <<< "${conflicts}"
@@ -229,6 +249,7 @@ main() {
     info "Starting: ${SYNC_BRANCH} <- ${TARGET_BRANCH}"
     : > /tmp/resolved-take-upstream.txt
     : > /tmp/resolved-take-downstream.txt
+    rm -f /tmp/go-mod-tidy-failed.txt
 
     if [[ "${RESOLVE_CONFLICTS}" == "true" ]]; then
         build_tool
@@ -289,6 +310,12 @@ main() {
     echo "::group::Pushing"
     git push -f origin "${SYNC_BRANCH}" || fatal "git push failed"
     echo "::endgroup::"
+
+    if [[ -s /tmp/go-mod-tidy-failed.txt ]]; then
+        err "go mod tidy failed for some modules — see PR description for details"
+        exit 1
+    fi
+
     info "Done"
 }
 
