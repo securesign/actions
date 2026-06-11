@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/securesign/actions/sync-upstream/resolve-conflicts/pkg/dockerfile"
+	"github.com/securesign/actions/sync-upstream/resolve-conflicts/pkg/fips"
 	"github.com/securesign/actions/sync-upstream/resolve-conflicts/pkg/gomod"
 	"github.com/securesign/actions/sync-upstream/resolve-conflicts/pkg/workflow"
 )
@@ -16,6 +17,14 @@ func Run(args []string) {
 	fs.Parse(args)
 
 	var allResolved, allFailed []string
+
+	fr, _, ff, err := fips.ResolveAll()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fips: %v\n", err)
+		os.Exit(1)
+	}
+	allResolved = append(allResolved, fr...)
+	allFailed = append(allFailed, ff...)
 
 	r, f, err := dockerfile.ResolveAll()
 	if err != nil {

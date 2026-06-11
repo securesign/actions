@@ -92,6 +92,12 @@ restore_downstream_only_files() {
     echo "::endgroup::"
 }
 
+resolve_fips() {
+    echo "::group::Resolving FIPS-related conflicts"
+    "${RESOLVE}" fips || true
+    echo "::endgroup::"
+}
+
 resolve_image_versions() {
     echo "::group::Resolving image version conflicts"
     local conflicts
@@ -269,6 +275,7 @@ main() {
         go_ceiling=$(get_go_ceiling)
         info "Go version ceiling: ${go_ceiling}"
 
+        resolve_fips
         resolve_image_versions
         resolve_gomod "${go_ceiling}"
         resolve_workflows

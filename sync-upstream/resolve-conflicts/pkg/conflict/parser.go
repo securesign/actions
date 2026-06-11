@@ -7,8 +7,24 @@ import (
 )
 
 type Block struct {
-	Ours   string
-	Theirs string
+	Ours       string
+	Theirs     string
+	OursLabel  string
+	TheirsLabel string
+}
+
+func (b Block) ReEmit() string {
+	var out strings.Builder
+	out.WriteString("<<<<<<< " + b.OursLabel)
+	if b.Ours != "" {
+		out.WriteString("\n" + b.Ours)
+	}
+	out.WriteString("\n=======")
+	if b.Theirs != "" {
+		out.WriteString("\n" + b.Theirs)
+	}
+	out.WriteString("\n>>>>>>> " + b.TheirsLabel)
+	return out.String()
 }
 
 type File struct {
@@ -26,6 +42,7 @@ func Parse(r io.Reader) (*File, error) {
 	var f File
 	var current strings.Builder
 	var ours, theirs strings.Builder
+	var oursLabel, theirsLabel string
 	inOurs, inTheirs := false, false
 	currentHasLines := false
 
@@ -39,6 +56,7 @@ func Parse(r io.Reader) (*File, error) {
 			currentHasLines = false
 			ours.Reset()
 			theirs.Reset()
+			oursLabel = strings.TrimPrefix(line, "<<<<<<< ")
 			inOurs = true
 			inTheirs = false
 
@@ -47,8 +65,14 @@ func Parse(r io.Reader) (*File, error) {
 			inTheirs = true
 
 		case strings.HasPrefix(line, ">>>>>>> ") && inTheirs:
+			theirsLabel = strings.TrimPrefix(line, ">>>>>>> ")
 			f.Sections = append(f.Sections, Section{
-				Conflict: &Block{Ours: ours.String(), Theirs: theirs.String()},
+				Conflict: &Block{
+					Ours:        ours.String(),
+					Theirs:      theirs.String(),
+					OursLabel:   oursLabel,
+					TheirsLabel: theirsLabel,
+				},
 			})
 			inOurs = false
 			inTheirs = false

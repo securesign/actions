@@ -100,6 +100,76 @@ after`
 	}
 }
 
+func TestLabels(t *testing.T) {
+	input := `before
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> origin/main
+after`
+
+	f, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	block := f.Conflicts()[0]
+	if block.OursLabel != "HEAD" {
+		t.Errorf("OursLabel: got %q, want %q", block.OursLabel, "HEAD")
+	}
+	if block.TheirsLabel != "origin/main" {
+		t.Errorf("TheirsLabel: got %q, want %q", block.TheirsLabel, "origin/main")
+	}
+}
+
+func TestReEmit(t *testing.T) {
+	input := `before
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> origin/main
+after`
+
+	f, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	got := f.Render(func(b Block) string {
+		return b.ReEmit()
+	})
+
+	want := "before\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> origin/main\nafter\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestReEmitEmptySide(t *testing.T) {
+	input := "<<<<<<< HEAD\n=======\ntheirs only\n>>>>>>> origin/main\n"
+
+	f, err := Parse(strings.NewReader(input))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	block := f.Conflicts()[0]
+	if block.Ours != "" {
+		t.Errorf("Ours should be empty, got %q", block.Ours)
+	}
+
+	got := f.Render(func(b Block) string {
+		return b.ReEmit()
+	})
+
+	want := "<<<<<<< HEAD\n=======\ntheirs only\n>>>>>>> origin/main\n"
+	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
 func TestNoConflicts(t *testing.T) {
 	input := "line 1\nline 2\nline 3"
 	f, err := Parse(strings.NewReader(input))

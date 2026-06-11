@@ -21,6 +21,8 @@ func main() {
 		cmd.Dockerfile(os.Args[2:])
 	case "workflow":
 		cmd.Workflow(os.Args[2:])
+	case "fips":
+		cmd.Fips(os.Args[2:])
 	case "go-ceiling":
 		cmd.GoCeiling(os.Args[2:])
 	default:
@@ -35,6 +37,7 @@ Usage: resolve-conflicts <command> [flags]
 
 Commands:
   all         Auto-resolve all known conflict patterns in the current merge
+  fips        Resolve conflicts in blocks marked with RHTAS FIPS banners
   gomod       Three-way merge of go.mod files
   dockerfile  Resolve Dockerfile golang version conflicts
   workflow    Resolve GitHub Actions workflow version conflicts
