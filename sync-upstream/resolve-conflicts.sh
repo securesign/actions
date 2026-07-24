@@ -218,12 +218,12 @@ resolve_take_upstream() {
         while IFS= read -r f; do
             [[ -z "${f}" ]] && continue
             # Handle modify/delete conflicts: upstream may have deleted the file
-            if git ls-tree HEAD -- "${f}" &>/dev/null; then
+            if [[ -n "$(git ls-tree HEAD -- "${f}")" ]]; then
                 git checkout --ours "${f}" || fatal "Failed to resolve ${f}"
+                git add "${f}"
             else
                 git rm "${f}" || fatal "Failed to resolve ${f}"
             fi
-            git add "${f}"
             echo "${f}" >> /tmp/resolved-take-upstream.txt
             info "Resolved (upstream pattern '${pattern}'): ${f}"
         done <<< "${matches}"
@@ -247,12 +247,12 @@ resolve_take_downstream() {
         while IFS= read -r f; do
             [[ -z "${f}" ]] && continue
             # Handle modify/delete conflicts: downstream may have deleted the file
-            if git ls-tree MERGE_HEAD -- "${f}" &>/dev/null; then
+            if [[ -n "$(git ls-tree MERGE_HEAD -- "${f}")" ]]; then
                 git checkout --theirs "${f}" || fatal "Failed to resolve ${f}"
+                git add "${f}"
             else
                 git rm "${f}" || fatal "Failed to resolve ${f}"
             fi
-            git add "${f}"
             echo "${f}" >> /tmp/resolved-take-downstream.txt
             info "Resolved (downstream pattern '${pattern}'): ${f}"
         done <<< "${matches}"
