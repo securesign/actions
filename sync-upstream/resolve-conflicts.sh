@@ -82,7 +82,7 @@ restore_downstream_only_files() {
         [[ -z "${file}" ]] && continue
         if git show "origin/${TARGET_BRANCH}:${file}" &>/dev/null; then
             git checkout "origin/${TARGET_BRANCH}" -- "${file}" && {
-                git add "${file}"
+                git add -- "${file}"
                 info "Restored: ${file}"
                 count=$((count + 1))
             }
@@ -114,7 +114,7 @@ resolve_image_versions() {
             info "Cannot auto-resolve ${f} — will remain as conflict"
             continue
         fi
-        git add "${f}"
+        git add -- "${f}"
         info "Resolved: ${f}"
     done <<< "${conflicts}"
     echo "::endgroup::"
@@ -153,7 +153,7 @@ resolve_gomod() {
             info "Cannot auto-resolve ${f} — will remain as conflict"
             continue
         fi
-        git add "${f}"
+        git add -- "${f}"
         gomod_dirs+=("$(dirname "${f}")")
         info "Resolved: ${f} (ceiling: ${go_ceiling})"
     done <<< "${conflicts}"
@@ -165,7 +165,7 @@ resolve_gomod() {
         local sum="${dir}/go.sum"
         [[ "${dir}" == "." ]] && sum="go.sum"
         if [[ -f "${sum}" ]] && grep -q '^<<<<<<< ' "${sum}" 2>/dev/null; then
-            rm "${sum}"
+            rm -- "${sum}"
             info "Removed conflicted ${sum} (will be regenerated)"
         fi
 
@@ -176,7 +176,7 @@ resolve_gomod() {
             echo "${dir}" >> /tmp/go-mod-tidy-failed.txt
             continue
         fi
-        git add "${dir}/go.mod" "${dir}/go.sum"
+        git add -- "${dir}/go.mod" "${dir}/go.sum"
     done
     echo "::endgroup::"
 }
@@ -197,7 +197,7 @@ resolve_workflows() {
             info "Cannot auto-resolve ${f} — will remain as conflict"
             continue
         fi
-        git add "${f}"
+        git add -- "${f}"
         info "Resolved: ${f}"
     done <<< "${conflicts}"
     echo "::endgroup::"
@@ -219,10 +219,10 @@ resolve_take_upstream() {
             [[ -z "${f}" ]] && continue
             # Handle modify/delete conflicts: upstream may have deleted the file
             if [[ -n "$(git ls-tree HEAD -- "${f}")" ]]; then
-                git checkout --ours "${f}" || fatal "Failed to resolve ${f}"
-                git add "${f}"
+                git checkout --ours -- "${f}" || fatal "Failed to resolve ${f}"
+                git add -- "${f}"
             else
-                git rm "${f}" || fatal "Failed to resolve ${f}"
+                git rm -- "${f}" || fatal "Failed to resolve ${f}"
             fi
             echo "${f}" >> /tmp/resolved-take-upstream.txt
             info "Resolved (upstream pattern '${pattern}'): ${f}"
@@ -248,10 +248,10 @@ resolve_take_downstream() {
             [[ -z "${f}" ]] && continue
             # Handle modify/delete conflicts: downstream may have deleted the file
             if [[ -n "$(git ls-tree MERGE_HEAD -- "${f}")" ]]; then
-                git checkout --theirs "${f}" || fatal "Failed to resolve ${f}"
-                git add "${f}"
+                git checkout --theirs -- "${f}" || fatal "Failed to resolve ${f}"
+                git add -- "${f}"
             else
-                git rm "${f}" || fatal "Failed to resolve ${f}"
+                git rm -- "${f}" || fatal "Failed to resolve ${f}"
             fi
             echo "${f}" >> /tmp/resolved-take-downstream.txt
             info "Resolved (downstream pattern '${pattern}'): ${f}"
