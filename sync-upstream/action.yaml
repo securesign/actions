@@ -279,8 +279,26 @@ runs:
       if: always() && steps.check-uptodate.outputs.uptodate == 'false'
       id: existing-pr
       run: |
-        EXISTING_PR=$(gh pr list --repo "$GH_REPO" --state open --head "$SYNC_BRANCH" --json number --jq '.[0].number // empty')
-        echo "pr_number=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
+        # Check for both open and merged PRs to avoid duplicate PRs
+        EXISTING_PR_DATA=$(gh pr list --repo "$GH_REPO" --state all --head "$SYNC_BRANCH" --limit 1 --json number,state --jq '.[0] // empty')
+
+        if [ -n "$EXISTING_PR_DATA" ]; then
+          EXISTING_PR=$(echo "$EXISTING_PR_DATA" | jq -r '.number')
+          EXISTING_STATE=$(echo "$EXISTING_PR_DATA" | jq -r '.state')
+
+          if [ "$EXISTING_STATE" = "MERGED" ]; then
+            echo "::notice::PR #${EXISTING_PR} for branch ${SYNC_BRANCH} was already merged. Skipping duplicate PR creation."
+            echo "skip_pr=true" >> "$GITHUB_OUTPUT"
+            echo "pr_number=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "pr_number=${EXISTING_PR}" >> "$GITHUB_OUTPUT"
+          echo "skip_pr=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "pr_number=" >> "$GITHUB_OUTPUT"
+          echo "skip_pr=false" >> "$GITHUB_OUTPUT"
+        fi
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
@@ -288,7 +306,7 @@ runs:
         SYNC_BRANCH: ${{ steps.push.outputs.sync_branch }}
 
     - name: Create or update PR
-      if: always() && steps.check-uptodate.outputs.uptodate == 'false'
+      if: always() && steps.check-uptodate.outputs.uptodate == 'false' && steps.existing-pr.outputs.skip_pr != 'true'
       run: |
         PR_TITLE="[Upstream Sync] Merge ${UPSTREAM_REF} into ${TARGET_BRANCH}"
 
@@ -322,6 +340,9 @@ runs:
         if [ "$UPTODATE" = "true" ]; then
           echo "### :white_check_mark: Already up-to-date" >> "$GITHUB_STEP_SUMMARY"
           echo "Branch \`${TARGET_BRANCH}\` already contains upstream \`${UPSTREAM_REF}\`." >> "$GITHUB_STEP_SUMMARY"
+        elif [ "$SKIP_PR" = "true" ]; then
+          echo "### :white_check_mark: Already synced" >> "$GITHUB_STEP_SUMMARY"
+          echo "Upstream \`${UPSTREAM_REF}\` was already merged to \`${TARGET_BRANCH}\` in a previous PR. Skipped duplicate PR creation." >> "$GITHUB_STEP_SUMMARY"
         elif [ "$MERGE_OUTCOME" = "success" ]; then
           echo "### :white_check_mark: Sync PR created" >> "$GITHUB_STEP_SUMMARY"
           echo "Upstream \`${UPSTREAM_REF}\` → \`${TARGET_BRANCH}\`." >> "$GITHUB_STEP_SUMMARY"
@@ -339,4 +360,5 @@ runs:
         UPSTREAM_REF: ${{ steps.upstream-ref.outputs.ref }}
         TARGET_BRANCH: ${{ inputs.target_branch }}
         UPTODATE: ${{ steps.check-uptodate.outputs.uptodate }}
+        SKIP_PR: ${{ steps.existing-pr.outputs.skip_pr }}
         MERGE_OUTCOME: ${{ steps.merge.outcome }}
