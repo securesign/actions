@@ -26,7 +26,7 @@ jobs:
       REDHAT_IO_USERNAME: ${{ secrets.registry_redhat_io_username }}
       REDHAT_IO_PASSWORD: ${{ secrets.registry_redhat_io_password }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@0717577d45739eb3c851188b29f50ed6c0b2194e # v2.8.0
       - name: Configure git
         run: |
           git config --global user.email "${GITHUB_ACTOR}@users.noreply.github.com"
