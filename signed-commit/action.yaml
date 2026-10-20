@@ -1,0 +1,66 @@
+name: Signed Commit
+description: >
+  Creates a commit through the GitHub REST API instead of `git commit` +
+  `git push`. GitHub signs commits that bots / GitHub Apps author via the API
+  ("Verified" badge), which satisfies require-signed-commits rulesets.
+
+inputs:
+  token:
+    description: 'GitHub token (GitHub App installation token recommended; needs contents: write, plus workflows: write when the commit touches workflow files)'
+    required: true
+  working-directory:
+    description: 'Repository checkout directory, relative to the workspace'
+    required: false
+    default: '.'
+  branch:
+    description: 'Branch to update (or to create, when create-branch is true)'
+    required: true
+  message:
+    description: 'Commit message'
+    required: true
+  base-ref:
+    description: 'Ref to diff against and use as first parent. Default: origin/<branch>, or origin/<default branch> when create-branch is true.'
+    required: false
+    default: ''
+  source-rev:
+    description: 'Commit-ish to read file contents from. Default: the git index (stage changes with git add first).'
+    required: false
+    default: ''
+  create-branch:
+    description: 'Create <branch> at the new commit instead of updating it'
+    required: false
+    default: 'false'
+  extra-parent:
+    description: 'Additional parent ref (creates a merge commit; recorded even when the diff is empty)'
+    required: false
+    default: ''
+  parent:
+    description: 'Override the first parent SHA; the commit is stacked on the parent tree (use when the parent is an API commit that does not exist locally)'
+    required: false
+    default: ''
+
+outputs:
+  commit-sha:
+    description: 'SHA of the created commit (empty when there was nothing to commit)'
+    value: ${{ steps.commit.outputs.commit-sha }}
+  committed:
+    description: '"true" when a commit was created, "false" when there were no changes'
+    value: ${{ steps.commit.outputs.committed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Create signed commit
+      id: commit
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        BRANCH: ${{ inputs.branch }}
+        MESSAGE: ${{ inputs.message }}
+        BASE_REF: ${{ inputs.base-ref }}
+        SOURCE_REV: ${{ inputs.source-rev }}
+        CREATE_BRANCH: ${{ inputs.create-branch }}
+        EXTRA_PARENT: ${{ inputs.extra-parent }}
+        PARENT_SHA: ${{ inputs.parent }}
+      run: bash "${GITHUB_ACTION_PATH}/signed_commit.sh"
