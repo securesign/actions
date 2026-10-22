@@ -1,0 +1,89 @@
+name: Test signed-commit action
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  # Unique per run, so the cleanup step can only ever delete a branch this
+  # run created
+  TEST_BRANCH: test/signed-commit-${{ github.run_id }}
+
+jobs:
+  self-test:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: test-signed-commit
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Nothing-to-commit path
+        id: nochange
+        uses: ./signed-commit
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.TEST_BRANCH }}
+          base-ref: origin/${{ github.ref_name }}
+          message: 'should not create a commit'
+
+      - name: Assert nothing committed
+        run: |
+          [ "${{ steps.nochange.outputs.committed }}" = "false" ]
+          [ -z "${{ steps.nochange.outputs.commit-sha }}" ]
+
+      - name: Stage first change
+        run: |
+          mkdir -p signed-commit/self-test
+          date -u +%Y-%m-%dT%H:%M:%SZ > signed-commit/self-test/last-run.txt
+          git add signed-commit/self-test/last-run.txt
+
+      - name: Create branch with signed commit
+        id: create
+        uses: ./signed-commit
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.TEST_BRANCH }}
+          create-branch: true
+          message: 'chore: signed-commit self-test (create)'
+
+      - name: Stage second change
+        run: |
+          date -u +%Y-%m-%dT%H:%M:%SZ > signed-commit/self-test/last-run.txt
+          git add signed-commit/self-test/last-run.txt
+
+      - name: Update branch with signed commit
+        id: update
+        uses: ./signed-commit
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.TEST_BRANCH }}
+          base-ref: origin/${{ github.ref_name }}
+          parent: ${{ steps.create.outputs.commit-sha }}
+          message: 'chore: signed-commit self-test (update)'
+
+      - name: Assert commits are verified
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for sha in "${{ steps.create.outputs.commit-sha }}" "${{ steps.update.outputs.commit-sha }}"; do
+            if ! gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}" \
+                 | jq -e '.commit.verification.verified == true' > /dev/null; then
+              echo "::error::Commit ${sha} is not verified"
+              gh api "repos/${GITHUB_REPOSITORY}/commits/${sha}" --jq '.commit.verification'
+              exit 1
+            fi
+            echo "Commit ${sha} is verified"
+          done
+
+      - name: Delete test branch
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          enc=$(jq -Rr @uri <<<"$TEST_BRANCH")
+          gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${enc}" || true

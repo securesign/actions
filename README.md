@@ -173,5 +173,58 @@ The `resolve-conflicts all` command auto-detects all conflicting files, resolves
 #### Repository Settings
 1. Actions need to be able to create pull requests (Settings -> Actions -> General -> Workflow permissions)
 
+### Signed Commit
+Creates a commit through the GitHub REST API instead of `git commit` + `git push`. GitHub signs commits that bots / GitHub Apps author via the API, so they show the **Verified** badge and satisfy `require signed commits` rulesets. No author/committer is sent, so the commit is attributed to the token's identity. Stage changes with `git add` before calling the action; it commits the diff against `base-ref` (default `origin/<branch>`).
+
+#### Usage
+```yaml
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.PR_MANAGER_CLIENT_ID }}
+          private-key: ${{ secrets.PR_MANAGER_APP_KEY }}
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+
+      - run: |
+          # ... generate changes ...
+          git add <paths>
+
+      - uses: securesign/actions/signed-commit@main
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: main
+          message: 'chore: update generated files'
+```
+
+#### Inputs
+| Input | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `token` | yes | | GitHub token (App installation token recommended; needs contents: write, plus workflows: write when the commit touches workflow files) |
+| `branch` | yes | | Branch to update (or to create, when `create-branch` is true) |
+| `message` | yes | | Commit message |
+| `base-ref` | no | `origin/<branch>` (`origin/<default branch>` with `create-branch`) | Ref to diff against and use as first parent |
+| `source-rev` | no | *(git index)* | Commit-ish to read file contents from |
+| `create-branch` | no | `false` | Create `<branch>` at the new commit instead of updating it |
+| `extra-parent` | no | | Additional parent ref (creates a merge commit; recorded even when the diff is empty) |
+| `parent` | no | | Override the first parent SHA; the commit is stacked on the parent's tree (when the parent is an API commit that does not exist locally) |
+
+#### Outputs
+| Output | Description |
+|--------|-------------|
+| `commit-sha` | SHA of the created commit (empty when there was nothing to commit) |
+| `committed` | `true` when a commit was created, `false` when there were no changes |
+
+#### Notes
+- The commit must not set a custom author/committer for GitHub to sign it; the action never sends one.
+- Content is uploaded per file (blobs), so large diffs are fine; uploads are byte-exact (returned blob SHAs are verified against the local ones).
+- Non-fast-forward updates fail loudly (re-run with a fresh checkout).
+
 # Contributing
 If you want to add a reusable GitHub action, please refer to the documentation [here](https://docs.github.com/en/actions/using-workflows/reusing-workflows).
